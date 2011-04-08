@@ -18,12 +18,8 @@ class CouplerContainer < Thread
     @local_coupler_jar = local_coupler_jar
   end
 
-  def getContextClassLoader
-    ClassLoader(@class_loader)
-  end
-
   def run:void
-    klass = Class.forName("org.jruby.embed.ScriptingContainer")
+    klass = @class_loader.loadClass("org.jruby.embed.ScriptingContainer")
     container = klass.newInstance
 
     parameter_types = Class[1]; parameter_types[0] = String.class
@@ -131,6 +127,7 @@ class CouplerLauncher
     while response_code == 302
       @latest_available_jar_url = URL.new(@latest_available_jar_url, conn.getHeaderField('Location'))
       conn = HttpURLConnection(@latest_available_jar_url.openConnection)
+      response_code = conn.getResponseCode
     end
     if response_code != 200
       puts "Something went wrong when downloading the Coupler update: #{conn.getResponseMessage}"
@@ -143,15 +140,18 @@ class CouplerLauncher
     buffer = byte[131072]
     total_bytes_read = 0
     bytes_read = reader.read(buffer)
+    out = System.out
+    out.println
     while bytes_read > 0
       total_bytes_read += bytes_read
-      puts "#{total_bytes_read / 1024}KB"
+      out.print("\r#{total_bytes_read / 1024}KB")
+      out.flush
       writer.write(buffer, 0, bytes_read)
       bytes_read = reader.read(buffer)
     end
     writer.close
     reader.close
-    puts "Done fetching."
+    puts "\nDone fetching."
 
     # unlink old jars
     @coupler_dir.listFiles.each do |f|
@@ -162,12 +162,13 @@ class CouplerLauncher
   end
 
   def run_coupler:void
-    pattern = Pattern.compile("^coupler-[a-f0-9]+.jar$");
     urls = URL[1]; urls[0] = @local_coupler_jar.toURL
     puts urls[0].toString
     cl = URLClassLoader.new(urls)
     thr = CouplerContainer.new(cl, @local_coupler_jar)
+    thr.setContextClassLoader(cl)
     thr.start
+    thr.join
   end
 end
 
