@@ -114,7 +114,7 @@ class CouplerLauncher
       end
     end
     fis.close
-    Hex.encodeHex(complete.digest)
+    String.new(Hex.encodeHex(complete.digest))
   end
 
   def install_latest_available_jar:void
@@ -150,11 +150,11 @@ class CouplerLauncher
     if @local_coupler_jar.exists
       # check the md5
       calculated_md5 = get_md5(@local_coupler_jar)
-      expected_md5 = conn.getHeaderField("ETag")
+      expected_md5 = conn.getHeaderField("ETag").replaceAll("\"", "")
       if expected_md5 == null
         puts "Didn't find an ETag. I guess I'll assume the existing file is okay..."
       else
-        if calculated_md5 != expected_md5
+        if calculated_md5.compareTo(expected_md5) != 0
           puts "The local file seems to be corrupt, so ignoring it."
         else
           return
