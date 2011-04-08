@@ -1,6 +1,7 @@
 import java.lang.ClassLoader
 import java.lang.Thread
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.FilenameFilter
 import java.net.URL
@@ -10,6 +11,7 @@ import java.util.ArrayList
 import java.util.Date
 import java.util.regex.Pattern
 import java.text.SimpleDateFormat
+import java.security.MessageDigest
 import org.jsoup.Jsoup
 
 class CouplerContainer < Thread
@@ -65,7 +67,7 @@ class CouplerLauncher
     doc = Jsoup.connect(github_url).get
     elts = doc.select('ol#manual_downloads')
     if elts.size == 0
-      return
+      raise "Can't connect to github"
     end
     ol = elts.get(0)
 
@@ -99,27 +101,37 @@ class CouplerLauncher
     end
   end
 
+  def get_md5(file:File)
+    # http://www.rgagnon.com/javadetails/java-0416.html
+    fis = FileInputStream.new(file)
+    buffer = byte[1024]
+    complete = MessageDigest.getInstance("MD5")
+    num_read = 0
+    while num_read != -1
+      num_read = fis.read(buffer)
+      if num_read > 0
+        complete.update(buffer, 0, num_read)
+      end
+    end
+    fis.close
+    Hex.encodeHex(complete.digest)
+  end
+
   def install_latest_available_jar:void
     if @latest_available_jar_url == nil
+      # FIXME: local_coupler_jar won't be set
       return
     end
     # get the basename
-    pattern = Pattern.compile(".*?([^/]*)$");
+    pattern = Pattern.compile(".*?([^/]*)$")
     matcher = pattern.matcher(@latest_available_jar_url.toString)
     if !matcher.matches
-      return
+      raise "Bad Coupler URL :("
     end
-
     basename = matcher.group(1)
     @local_coupler_jar = File.new(@coupler_dir, basename)
-    if @local_coupler_jar.exists
-      return
-    end
 
-    # grab the new jar file
-    puts "There's a new Coupler version available. Fetching..."
-
-    # github's download urls are probably redirections, which
+    # Github's download urls are probably redirections, which
     # sucks because they redirect from https to http, which
     # HttpURLConnection won't follow because of security issues
     conn = HttpURLConnection(@latest_available_jar_url.openConnection)
@@ -130,10 +142,28 @@ class CouplerLauncher
       response_code = conn.getResponseCode
     end
     if response_code != 200
-      puts "Something went wrong when downloading the Coupler update: #{conn.getResponseMessage}"
+      puts "Something went wrong when checking for new Coupler versions: #{conn.getResponseMessage}"
       puts "Aborting... :("
       return
     end
+
+    if @local_coupler_jar.exists
+      # check the md5
+      calculated_md5 = get_md5(@local_coupler_jar)
+      expected_md5 = conn.getHeaderField("ETag")
+      if expected_md5 == null
+        puts "Didn't find an ETag. I guess I'll assume the existing file is okay..."
+      else
+        if calculated_md5 != expected_md5
+          puts "The local file seems to be corrupt, so ignoring it."
+        else
+          return
+        end
+      end
+    end
+
+    # grab the new jar file
+    puts "There's a new Coupler version available. Fetching..."
 
     reader = conn.getInputStream
     writer = FileOutputStream.new(@local_coupler_jar)
@@ -141,7 +171,6 @@ class CouplerLauncher
     total_bytes_read = 0
     bytes_read = reader.read(buffer)
     out = System.out
-    out.println
     while bytes_read > 0
       total_bytes_read += bytes_read
       out.print("\r#{total_bytes_read / 1024}KB")
