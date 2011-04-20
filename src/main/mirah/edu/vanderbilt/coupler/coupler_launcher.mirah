@@ -12,6 +12,13 @@ import java.util.Date
 import java.util.regex.Pattern
 import java.text.SimpleDateFormat
 import java.security.MessageDigest
+import java.awt.SystemTray
+import java.awt.Toolkit
+import java.awt.PopupMenu
+import java.awt.MenuItem
+import java.awt.TrayIcon
+import java.awt.AWTException
+import java.awt.event.ActionEvent
 import org.jsoup.Jsoup
 
 class CouplerContainer < Thread
@@ -51,6 +58,7 @@ class CouplerLauncher
     find_coupler_dir
     find_latest_available_jar
     install_latest_available_jar
+    show_tray_icon
     run_coupler
   end
 
@@ -190,9 +198,53 @@ class CouplerLauncher
     end
   end
 
+  def show_tray_icon:void
+    if !SystemTray.isSupported
+      return
+    end
+
+    # get the SystemTray instance
+    tray = SystemTray.getSystemTray
+
+    # load an image
+    icon_size = tray.getTrayIconSize
+    w = icon_size.width
+    h = icon_size.height
+    if w == h && (w == 64 || w == 48 || w == 32 || w == 24 || w == 16)
+      fn = CouplerLauncher.class.getResource("/tray_icon-#{w}x#{h}.png")
+      image = Toolkit.getDefaultToolkit.getImage(fn)
+    else
+      image = Toolkit.getDefaultToolkit.getImage(CouplerLauncher.class.getResource("/tray_icon.png"))
+      image = image.getScaledInstance(icon_size.width, icon_size.height, 1)
+    end
+
+    # create a popup menu
+    popup = PopupMenu.new
+
+    # create menu item for the default action
+    default_item = MenuItem.new("Quit")
+    default_item.addActionListener do |e|
+      System.exit(0)
+    end
+    popup.add(default_item)
+
+    # construct a TrayIcon
+    tray_icon = TrayIcon.new(image, "Coupler", popup)
+    # set the TrayIcon properties
+    #trayIcon.addActionListener do |e|
+      #puts "ICON ACTION!"
+    #end
+
+    # add the tray image
+    begin
+      tray.add(tray_icon)
+    rescue AWTException => e
+      puts(e)
+    end
+  end
+
   def run_coupler:void
     urls = URL[1]; urls[0] = @local_coupler_jar.toURL
-    puts urls[0].toString
     cl = URLClassLoader.new(urls)
     thr = CouplerContainer.new(cl, @local_coupler_jar)
     thr.setContextClassLoader(cl)
