@@ -20,32 +20,20 @@
       <artifactId>jsoup</artifactId>
       <version>1.5.2</version>
     </dependency>
+    <dependency>
+      <groupId>org.jruby</groupId>
+      <artifactId>jruby-complete</artifactId>
+      <version>1.6.1</version>
+    </dependency>
   </dependencies>
   <build>
     <plugins>
-      <plugin>
-        <groupId>org.mirah.maven</groupId>
-        <artifactId>maven-mirah-plugin</artifactId>
-        <executions>
-          <execution>
-            <phase>compile</phase>
-            <goals><goal>compile</goal></goals>
-            <!--
-            <configuration>
-              <verbose>true</verbose>
-            </configuration>
-            -->
-          </execution>
-        </executions>
-      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
         <configuration>
           <archive>
-            <manifest>
-              <mainClass>edu.vanderbilt.coupler.CouplerLauncher</mainClass>
-            </manifest>
+            <manifestFile>src/main/resources/META-INF/MANIFEST.MF</manifestFile>
           </archive>
         </configuration>
       </plugin>
@@ -63,6 +51,7 @@
               <artifactSet>
                 <includes>
                   <include>org.jsoup:jsoup</include>
+                  <include>org.jruby:jruby-complete</include>
                 </includes>
               </artifactSet>
             </configuration>
