@@ -169,8 +169,10 @@ module Coupler
         return false
       end
 
-      require 'rubygems'
-      require @installed_files['coupler-dependencies']
+      # This involves some skullduggery.
+      dependency_jar = @installed_files['coupler-dependencies']
+      Gem.use_paths(nil, ["file:#{dependency_jar}!/"])
+      require dependency_jar  # for java stuff
       require "file:#{@installed_files['coupler']}!/lib/coupler"
 
       if !Coupler::Server.instance.is_running?

@@ -7,6 +7,11 @@
   <version>1.0-SNAPSHOT</version>
   <name>coupler-launcher</name>
   <url>http://maven.apache.org</url>
+  <properties>
+    <jruby.version>1.6.1</jruby.version>
+    <gem.options>--no-rdoc --no-ri --install-dir=src/main/resources</gem.options>
+    <required.gems>jruby-openssl</required.gems>
+  </properties>
   <dependencies>
     <dependency>
       <groupId>junit</groupId>
@@ -23,14 +28,32 @@
     <dependency>
       <groupId>org.jruby</groupId>
       <artifactId>jruby-complete</artifactId>
-      <version>1.6.1</version>
+      <version>${jruby.version}</version>
     </dependency>
   </dependencies>
   <build>
     <plugins>
       <plugin>
+        <groupId>org.jruby.plugins</groupId>
+        <artifactId>jruby-rake-plugin</artifactId>
+        <version>${jruby.version}</version>
+        <executions>
+          <execution>
+            <id>install-gems</id>
+            <phase>generate-resources</phase>
+            <goals>
+              <goal>install-gems</goal>
+            </goals>
+            <configuration>
+              <gems>${gem.options} ${required.gems}</gems>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
+        <version>2.3.1</version>
         <configuration>
           <archive>
             <manifestFile>src/main/resources/META-INF/MANIFEST.MF</manifestFile>
