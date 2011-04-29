@@ -2,7 +2,6 @@ require 'java'
 require 'rbconfig'
 require 'date'
 require 'uri'
-require 'open-uri'
 require 'digest/md5'
 require 'fileutils'
 require 'net/http'
@@ -14,9 +13,13 @@ module Coupler
     include_package 'java.awt'
 
     GITHUB_URL = "https://github.com/coupler/coupler/downloads"
-    TEXT_X = 120
+    TEXT_X = 130
     TEXT_Y = 200
-    TEXT_W = 280
+    TEXT_W = 260
+    PROGRESS_X = TEXT_X
+    PROGRESS_Y = TEXT_Y + 10
+    PROGRESS_W = TEXT_W
+    PROGRESS_H = 25
 
     def setup_gui
       @splash = SplashScreen.splash_screen
@@ -25,7 +28,7 @@ module Coupler
       @graphic = @splash.create_graphics
       @graphic.composite = AlphaComposite::Clear
       @graphic.set_paint_mode
-      font = Font.new("Verdana", 0, 16)
+      font = Font.new("Lucida Sans", 0, 16)
       @graphic.font = font
       @font_metrics = @graphic.font_metrics
     end
@@ -106,7 +109,7 @@ module Coupler
       found = false
       etag = nil
       until found
-        puts url
+        #puts url
         http = Net::HTTP.new(url.host, url.port)
         http.use_ssl = url.scheme == "https"
         http.start
@@ -126,11 +129,54 @@ module Coupler
       { :url => url, :etag => etag }
     end
 
+    def setup_progress_bar
+      x, y, w, h = PROGRESS_X, PROGRESS_Y, PROGRESS_W, PROGRESS_H
+      #puts "Setup: #{[x, y, w, h].inspect}"
+      @graphic.color = Color::BLACK
+      @graphic.draw(Rectangle.new(x, y, w, h))
+      @splash.update
+    end
+
+    def nudge_progress_bar(size, total)
+      x, y, w, h = PROGRESS_X, PROGRESS_Y, PROGRESS_W, PROGRESS_H
+      w = (w * (size.to_f / total.to_f)).round
+      #puts "Size: #{size}; Total: #{total}; Nudge: #{[x, y, w, h].inspect}"
+      @graphic.color = Color::BLUE
+      @graphic.fill_rect(x, y, w, h)
+      @splash.update
+    end
+
+    def remove_progress_bar
+      x, y, w, h = PROGRESS_X, PROGRESS_Y, PROGRESS_W, PROGRESS_H
+      @graphic.color = Color::WHITE
+      @graphic.fill_rect(x, y, w, h)
+      @splash.update
+    end
+
+    def download_file(name, url, local)
+      print_update("Downloading #{name}...")
+      http = Net::HTTP.new(url.host, url.port)
+      http.request_get(url.path) do |response|
+        setup_progress_bar
+        out = File.open(local, 'w')
+        total_size = response['content-length']
+        size = 0
+        response.read_body do |segment|
+          size += segment.length
+          nudge_progress_bar(size, total_size)
+          out.write(segment)
+        end
+        out.close
+        remove_progress_bar
+      end
+    end
+
     def update_installation
       github_url = URI.parse(GITHUB_URL)
       @installed_files = {}
       @latest_files.each_pair do |name, info|
-        print_update("Verifying #{name}...")
+        shortname = name.split(/-/)[-1]
+        print_update("Verifying #{shortname}...")
 
         get_file = true
         rinfo = follow_redirection_for(github_url + info[:href])
@@ -147,10 +193,7 @@ module Coupler
         end
 
         if get_file
-          print_update("Downloading #{name}...")
-          tempfile = open(rinfo[:url])
-          tempfile.close
-          FileUtils.mv(tempfile.path, local_fn)
+          download_file(shortname, rinfo[:url], local_fn)
 
           # unlink old files
           Dir[File.join(@coupler_dir, "#{name}*")].each do |fn|
