@@ -12,7 +12,7 @@ module Coupler
     include java.lang.Runnable
     include_package 'java.awt'
 
-    GITHUB_URL = "https://github.com/coupler/coupler/downloads"
+    FILES_URL = "http://biostat.mc.vanderbilt.edu/coupler/"
     TEXT_X = 130
     TEXT_Y = 200
     TEXT_W = 260
@@ -67,66 +67,41 @@ module Coupler
           raise "Couldn't create the Coupler directory: #{@coupler_dir}"
         end
       end
+      puts "COUPLER DIR: #{@coupler_dir}"
     end
 
     def find_latest_files
       print_update("Checking for updates...")
 
-      doc = org.jsoup.Jsoup.connect(GITHUB_URL).get
-      elts = doc.select('ol#manual_downloads')
-      if elts.size == 0
-        raise "Can't connect to github"
-      end
-      ol = elts.get(0)
+      doc = org.jsoup.Jsoup.connect(FILES_URL).get
+      elts = doc.select('table tbody tr')
+      raise "Can't connect to repository" unless elts.size > 0
 
       files = {}
 
-      ol.select('li').each do |li|
-        links = li.select('h4 a')
-        next  if links.size == 0
-        link = links.get(0)
+      elts.each do |tr|
+        tds = tr.select('td')
+        file_td = tds.get(0)
+        mtime_td = tds.get(1)
+        md5_td = tds.get(2)
+        link = file_td.select('a').get(0)
 
-        abbrs = li.select('abbr')
-        next  if abbrs.size == 0
-
-        abbr = abbrs.get(0)
-        date = Date.parse(abbr.html)
         basename = link.html
-        name = basename.sub(/-[a-f0-9]+\.jar$/, "")
-        if files[name].nil? || files[name][:date] < date
+        name = basename.sub(/-[a-f0-9]{7}\.jar$/, "")
+        mtime = Date.parse(mtime_td.html)
+
+        if files[name].nil? || files[name][:mtime] < mtime
           files[name] = {
             :basename => basename,
-            :date => date,
-            :href => link.attr('href')
+            :mtime => mtime,
+            :href => link.attr('href'),
+            :md5 => md5_td.html
           }
         end
       end
 
+      puts "LATEST FILES: #{files.inspect}"
       @latest_files = files
-    end
-
-    def follow_redirection_for(url)
-      found = false
-      etag = nil
-      until found
-        #puts url
-        http = Net::HTTP.new(url.host, url.port)
-        http.use_ssl = url.scheme == "https"
-        http.start
-        res = http.request_head(url.path)
-        http.finish
-
-        case res.code
-        when '302'
-          url = url + res.header['location']
-        when '200'
-          found = true
-          etag = res.header['etag']
-        else
-          raise "Unexpected response when getting JAR: #{res}"
-        end
-      end
-      { :url => url, :etag => etag }
     end
 
     def setup_progress_bar
@@ -154,6 +129,7 @@ module Coupler
     end
 
     def download_file(name, url, local)
+      puts "DOWNLOADING: #{url}"
       print_update("Downloading #{name}...")
       http = Net::HTTP.new(url.host, url.port)
       http.request_get(url.path) do |response|
@@ -172,19 +148,17 @@ module Coupler
     end
 
     def update_installation
-      github_url = URI.parse(GITHUB_URL)
+      files_url = URI.parse(FILES_URL)
       @installed_files = {}
       @latest_files.each_pair do |name, info|
         shortname = name.split(/-/)[-1]
         print_update("Verifying #{shortname}...")
 
         get_file = true
-        rinfo = follow_redirection_for(github_url + info[:href])
-
         local_fn = File.join(@coupler_dir, info[:basename])
         if File.exist?(local_fn)
           md5 = Digest::MD5.hexdigest(File.read(local_fn))
-          if md5 && rinfo[:etag].gsub('"', '') != md5
+          if md5 != info[:md5]
             puts "#{info[:basename]} seems to be corrupt; will redownload it."
           else
             puts "#{info[:basename]} looks good to me!"
@@ -193,15 +167,19 @@ module Coupler
         end
 
         if get_file
-          download_file(shortname, rinfo[:url], local_fn)
-
-          # unlink old files
-          Dir[File.join(@coupler_dir, "#{name}*")].each do |fn|
-            FileUtils.rm_f(fn)  if fn != local_fn
-          end
+          url = files_url + info[:href]
+          download_file(shortname, url, local_fn)
         end
+        puts "DOWNLOADED: #{name} => #{local_fn}"
         @installed_files[name] = local_fn
       end
+
+      # unlink old files
+      old_files = Dir[File.join(@coupler_dir, "*.jar")] - @installed_files.values
+      old_files.each do |fn|
+        FileUtils.rm_f(fn)
+      end
+      puts "INSTALLED FILES: #{@installed_files.inspect}"
     end
 
     def start_coupler
