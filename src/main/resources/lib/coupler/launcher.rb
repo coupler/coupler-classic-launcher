@@ -6,6 +6,7 @@ require 'digest/md5'
 require 'fileutils'
 require 'net/http'
 require 'net/https'
+require 'pp'
 
 module Coupler
   class Launcher
@@ -100,7 +101,9 @@ module Coupler
         end
       end
 
-      puts "LATEST FILES: #{files.inspect}"
+      puts "=== LATEST FILES ==="
+      pp files
+
       @latest_files = files
     end
 
@@ -122,7 +125,7 @@ module Coupler
     end
 
     def remove_progress_bar
-      x, y, w, h = PROGRESS_X, PROGRESS_Y, PROGRESS_W, PROGRESS_H
+      x, y, w, h = PROGRESS_X-5, PROGRESS_Y-5, PROGRESS_W+10, PROGRESS_H+10
       @graphic.color = Color::WHITE
       @graphic.fill_rect(x, y, w, h)
       @splash.update
@@ -134,7 +137,7 @@ module Coupler
       http = Net::HTTP.new(url.host, url.port)
       http.request_get(url.path) do |response|
         setup_progress_bar
-        out = File.open(local, 'w')
+        out = File.open(local, 'wb')
         total_size = response['content-length']
         size = 0
         response.read_body do |segment|
@@ -142,14 +145,17 @@ module Coupler
           nudge_progress_bar(size, total_size)
           out.write(segment)
         end
+        out.flush
         out.close
         remove_progress_bar
       end
+      puts "DOWNLOADED: #{name} => #{local}"
     end
 
     def update_installation
       files_url = URI.parse(FILES_URL)
       @installed_files = {}
+      puts "=== VERIFY FILES ==="
       @latest_files.each_pair do |name, info|
         shortname = name.split(/-/)[-1]
         print_update("Verifying #{shortname}...")
@@ -157,7 +163,9 @@ module Coupler
         get_file = true
         local_fn = File.join(@coupler_dir, info[:basename])
         if File.exist?(local_fn)
-          md5 = Digest::MD5.hexdigest(File.read(local_fn))
+          md5 = Digest::MD5.hexdigest(File.open(local_fn, 'rb') { |f| f.read })
+          puts "Local MD5:  #{md5.inspect}"
+          puts "Remote MD5: #{info[:md5].inspect}"
           if md5 != info[:md5]
             puts "#{info[:basename]} seems to be corrupt; will redownload it."
           else
@@ -170,7 +178,6 @@ module Coupler
           url = files_url + info[:href]
           download_file(shortname, url, local_fn)
         end
-        puts "DOWNLOADED: #{name} => #{local_fn}"
         @installed_files[name] = local_fn
       end
 
@@ -220,7 +227,7 @@ module Coupler
       #       by hand.
       @web_server = Mongrel::HttpServer.new(settings.bind, settings.port, 950, 0, 60)
       @web_server.register('/', handler.new(Coupler::Base))
-      @web_server.run
+      @web_thread = @web_server.run
       Coupler::Base.set(:running, true)
 
       true
@@ -231,14 +238,16 @@ module Coupler
 
       if !Desktop.desktop_supported?
         # FIXME: don't just return.
-        puts "Desktop not supported :("
+        puts "Can't open browser. Desktop not supported :("
+        puts "Please go to http://localhost:4567 manually"
         return
       end
 
       desktop = Desktop.desktop
       if !desktop.supported?(Desktop::Action::BROWSE)
         # FIXME: don't just return.
-        puts "Desktop browse not supported :("
+        puts "Can't open browser. Desktop browse not supported :("
+        puts "Please go to http://localhost:4567 manually"
         return
       end
 
@@ -247,7 +256,15 @@ module Coupler
     end
 
     def setup_tray_icon
-      return if !SystemTray.supported?   # FIXME: don't just return.
+      if !SystemTray.supported?
+        puts "Can't open system tray :("
+        trap("INT") do
+          shutdown
+        end
+        @web_thread.join
+
+        return
+      end
 
       # get the SystemTray instance
       @tray = SystemTray.system_tray
@@ -304,7 +321,9 @@ module Coupler
 
       @web_server.stop
 
-      @tray.remove(@tray_icon)
+      if @tray
+        @tray.remove(@tray_icon)
+      end
     end
 
     def run
