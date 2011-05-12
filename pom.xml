@@ -20,12 +20,6 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <!-- jsoup HTML parser library @ http://jsoup.org/ -->
-      <groupId>org.jsoup</groupId>
-      <artifactId>jsoup</artifactId>
-      <version>1.5.2</version>
-    </dependency>
-    <dependency>
       <groupId>org.jruby</groupId>
       <artifactId>jruby-complete</artifactId>
       <version>${jruby.version}</version>
@@ -73,7 +67,6 @@
             <configuration>
               <artifactSet>
                 <includes>
-                  <include>org.jsoup:jsoup</include>
                   <include>org.jruby:jruby-complete</include>
                 </includes>
               </artifactSet>
