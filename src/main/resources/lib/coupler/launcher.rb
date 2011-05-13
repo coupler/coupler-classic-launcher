@@ -2,6 +2,7 @@ require 'java'
 require 'rbconfig'
 require 'rubygems'
 require 'rubygems/dependency_installer'
+require 'rubygems/uninstaller'
 
 class Gem::ConfigFile
   # NOTE: Monkey patch ConfigFile so it doesn't load user's gemrc :(
@@ -87,7 +88,7 @@ module Coupler
       @font_metrics = @graphic.font_metrics
     end
 
-    def print_update(string)
+    def say(string)
       width = @font_metrics.string_width(string)
       @graphic.color = Color::WHITE
       @graphic.fill_rect(TEXT_X, TEXT_Y - 30, TEXT_W, 60)
@@ -97,7 +98,7 @@ module Coupler
     end
 
     def find_coupler_dir
-      print_update("Locating Coupler directory...")
+      say("Locating Coupler directory...")
 
       # NOTE: Unfortunately, this code is in two places. Coupler can
       # be run with or without the launcher, and the launcher needs
@@ -131,8 +132,8 @@ module Coupler
       @coupler_dir = File.expand_path(dir)
       puts "COUPLER DIR: #{@coupler_dir}"
 
-      gems_dir = File.join(@coupler_dir, "gems")
-      Gem.use_paths(gems_dir, [gems_dir])
+      @gems_dir = File.join(@coupler_dir, "gems")
+      Gem.use_paths(@gems_dir, [@gems_dir])
     end
 
     def install_or_update_coupler
@@ -145,7 +146,7 @@ module Coupler
         :env_shebang => false, :domain => :remote, :force => false,
         :format_executable => false, :ignore_dependencies => false,
         :prerelease => false, :security_policy => nil,
-        :wrappers => false, :generate_rdoc => false,
+        :wrappers => true, :generate_rdoc => false,
         :generate_ri => false, :version => version,
         :args => needed_gems
       }
@@ -157,14 +158,15 @@ module Coupler
         end
       end
 
+      do_cleanup = false
       needed_gems.each do |gem_name|
         if hig[gem_name].nil?
-          print_update("Installing #{gem_name}...")
+          say("Installing #{gem_name}...")
 
           installer = Gem::DependencyInstaller.new(installer_options)
           installer.install(gem_name, version)
         else
-          print_update("Checking #{gem_name}...")
+          say("Checking #{gem_name}...")
 
           l_name = gem_name
           l_spec = hig[gem_name]
@@ -183,12 +185,80 @@ module Coupler
             highest_remote_ver = highest_remote_gem.first[1]
 
             if l_spec.version < highest_remote_ver
-              print_update("Updating #{gem_name}...")
+              do_cleanup = true
+              say("Updating #{gem_name}...")
               installer = Gem::DependencyInstaller.new(installer_options)
               installer.install(l_name, version)
             end
           end
         end
+      end
+
+      if do_cleanup
+        say "Cleaning up old files..."
+        options = {:force=>false, :install_dir=>@gems_dir, :args=>[]}
+
+        # Copied straight from the cleanup command
+        primary_gems = {}
+
+        Gem.source_index.each do |name, spec|
+          if primary_gems[spec.name].nil? or
+             primary_gems[spec.name].version < spec.version then
+            primary_gems[spec.name] = spec
+          end
+        end
+
+        gems_to_cleanup = []
+
+        unless options[:args].empty? then
+          options[:args].each do |gem_name|
+            dep = Gem::Dependency.new gem_name, Gem::Requirement.default
+            specs = Gem.source_index.search dep
+            specs.each do |spec|
+              gems_to_cleanup << spec
+            end
+          end
+        else
+          Gem.source_index.each do |name, spec|
+            gems_to_cleanup << spec
+          end
+        end
+
+        gems_to_cleanup = gems_to_cleanup.select { |spec|
+          primary_gems[spec.name].version != spec.version
+        }
+
+        deplist = Gem::DependencyList.new
+        gems_to_cleanup.uniq.each do |spec| deplist.add spec end
+
+        deps = deplist.strongly_connected_components.flatten.reverse
+
+        deps.each do |spec|
+          #say "Attempting to uninstall #{spec.full_name}"
+
+          options[:args] = [spec.name]
+
+          uninstall_options = {
+            :executables => false,
+            :version => "= #{spec.version}",
+          }
+
+          if Gem.user_dir == spec.installation_path then
+            uninstall_options[:install_dir] = spec.installation_path
+          end
+
+          uninstaller = Gem::Uninstaller.new spec.name, uninstall_options
+
+          begin
+            uninstaller.uninstall
+          rescue Gem::DependencyRemovalException, Gem::InstallError,
+                 Gem::GemNotInHomeException => e
+            say "Unable to uninstall #{spec.full_name}:"
+            say "\t#{e.class}: #{e.message}"
+          end
+        end
+
+        #say "Clean Up Complete"
       end
     end
 
@@ -220,30 +290,29 @@ module Coupler
       # FIXME: ensure coupler is installed; it might not be if
       # for some reason it can't be found in the gem repos
       require 'coupler'
-      @runner = Coupler::Runner.new([], :trap => false) { |msg| print_update(msg) if @splash }
+      @runner = Coupler::Runner.new([], :trap => false) { |msg| say(msg) if @splash }
       true
     end
 
     def launch_browser
-      print_update("Launching browser...")
+      say("Launching browser...")
 
       if !Desktop.desktop_supported?
-        # FIXME: don't just return.
         puts "Can't open browser. Desktop not supported :("
         puts "Please go to http://localhost:4567 manually"
         return
       end
 
-      desktop = Desktop.desktop
-      if !desktop.supported?(Desktop::Action::BROWSE)
-        # FIXME: don't just return.
+      @desktop = Desktop.desktop
+      if !@desktop.supported?(Desktop::Action::BROWSE)
+        @desktop = nil
         puts "Can't open browser. Desktop browse not supported :("
         puts "Please go to http://localhost:4567 manually"
         return
       end
 
-      uri = java.net.URI.new("http://localhost:4567/")
-      desktop.browse(uri.java_object)
+      @local_uri = java.net.URI.new("http://localhost:4567/")
+      @desktop.browse(@local_uri.java_object)
     end
 
     def setup_tray_icon
@@ -280,12 +349,19 @@ module Coupler
       # create a popup menu
       popup = PopupMenu.new
 
-      # create menu item for the default action
-      default_item = MenuItem.new("Quit")
-      default_item.add_action_listener do |e|
+      if @desktop
+        open_item = MenuItem.new("Open")
+        open_item.add_action_listener do |e|
+          @desktop.browse(@local_uri.java_object)
+        end
+        popup.add(open_item)
+      end
+
+      quit_item = MenuItem.new("Quit")
+      quit_item.add_action_listener do |e|
         shutdown
       end
-      popup.add(default_item)
+      popup.add(quit_item)
 
       # construct a TrayIcon
       @tray_icon = TrayIcon.new(image, "Coupler", popup)
