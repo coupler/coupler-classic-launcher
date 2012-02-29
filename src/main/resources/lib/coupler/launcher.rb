@@ -1,67 +1,7 @@
 require 'java'
 require 'rbconfig'
 require 'rubygems'
-require 'rubygems/dependency_installer'
-require 'rubygems/uninstaller'
-
-class Gem::ConfigFile
-  # NOTE: Monkey patch ConfigFile so it doesn't load user's gemrc :(
-  def initialize(arg_list)
-    @config_file_name = nil
-    need_config_file_name = false
-
-    arg_list = arg_list.map do |arg|
-      if need_config_file_name then
-        @config_file_name = arg
-        need_config_file_name = false
-        nil
-      elsif arg =~ /^--config-file=(.*)/ then
-        @config_file_name = $1
-        nil
-      elsif arg =~ /^--config-file$/ then
-        need_config_file_name = true
-        nil
-      else
-        arg
-      end
-    end.compact
-
-    @backtrace = DEFAULT_BACKTRACE
-    @benchmark = DEFAULT_BENCHMARK
-    @bulk_threshold = DEFAULT_BULK_THRESHOLD
-    @verbose = DEFAULT_VERBOSITY
-    @update_sources = DEFAULT_UPDATE_SOURCES
-
-    operating_system_config = Marshal.load Marshal.dump(OPERATING_SYSTEM_DEFAULTS)
-    platform_config = Marshal.load Marshal.dump(PLATFORM_DEFAULTS)
-    system_config = load_file SYSTEM_WIDE_CONFIG_FILE
-    #user_config = load_file config_file_name.dup.untaint
-    if ENV['COUPLER_DEV']
-      user_config = { :sources => %w{http://data.vanderbilt.edu/coupler/} }
-    else
-      user_config = {}
-    end
-
-    @hash = operating_system_config.merge platform_config
-    @hash = @hash.merge system_config
-    @hash = @hash.merge user_config
-
-    # HACK these override command-line args, which is bad
-    @backtrace        = @hash[:backtrace]        if @hash.key? :backtrace
-    @benchmark        = @hash[:benchmark]        if @hash.key? :benchmark
-    @bulk_threshold   = @hash[:bulk_threshold]   if @hash.key? :bulk_threshold
-    @home             = @hash[:gemhome]          if @hash.key? :gemhome
-    @path             = @hash[:gempath]          if @hash.key? :gempath
-    @update_sources   = @hash[:update_sources]   if @hash.key? :update_sources
-    @verbose          = @hash[:verbose]          if @hash.key? :verbose
-
-    load_rubygems_api_key
-
-    Gem.sources = @hash[:sources] if @hash.key? :sources
-    handle_arguments arg_list
-  end
-end
-Gem.configuration # force
+require 'rubygems/format'
 
 module Coupler
   class Launcher
@@ -137,129 +77,42 @@ module Coupler
     end
 
     def install_or_update_coupler
-      # Most of this is from what I could figure out by trying to parse
-      # the install and update rubygems commands; a lot of copied code
+      # Borrowing ideas from JRuby's maybe_install_gems command
 
-      needed_gems = %w{coupler}
-      version = Gem::Requirement.default
-      installer_options = {
-        :env_shebang => false, :domain => :remote, :force => false,
-        :format_executable => false, :ignore_dependencies => false,
-        :prerelease => false, :security_policy => nil,
-        :wrappers => true, :generate_rdoc => false,
-        :generate_ri => false, :version => version,
-        :args => needed_gems
-      }
+      say("Checking Coupler version...")
+      gem_name = "coupler"
 
-      hig = {}  # highest installed gems
-      Gem.source_index.each do |name, spec|
-        if hig[spec.name].nil? or hig[spec.name].version < spec.version then
-          hig[spec.name] = spec
-        end
+      # Want the kernel gem method here; expose a backdoor b/c RubyGems 1.3.1 made it private
+      Object.class_eval { def __gem(g); gem(g); end }
+      gem_loader = Object.new
+
+      command = "install"
+      begin
+        gem_loader.__gem(gem_name)
+        command = "update"
+        say("Checking for updates...")
+      rescue Gem::LoadError
+        say("Installing Coupler...")
       end
 
-      do_cleanup = false
-      needed_gems.each do |gem_name|
-        if hig[gem_name].nil?
-          say("Installing #{gem_name}...")
+      Object.class_eval { remove_method :__gem }
 
-          installer = Gem::DependencyInstaller.new(installer_options)
-          installer.install(gem_name, version)
-        else
-          say("Checking #{gem_name}...")
-
-          l_name = gem_name
-          l_spec = hig[gem_name]
-          dependency = Gem::Dependency.new(l_spec.name, "> #{l_spec.version}")
-          fetcher = Gem::SpecFetcher.fetcher
-          spec_tuples = fetcher.find_matching dependency
-
-          matching_gems = spec_tuples.select do |(name, _, platform),|
-            name == l_name and Gem::Platform.match platform
-          end
-
-          if !matching_gems.empty?
-            highest_remote_gem = matching_gems.sort_by do |(_, version),|
-              version
-            end.last
-            highest_remote_ver = highest_remote_gem.first[1]
-
-            if l_spec.version < highest_remote_ver
-              do_cleanup = true
-              say("Updating #{gem_name}...")
-              installer = Gem::DependencyInstaller.new(installer_options)
-              installer.install(l_name, version)
-            end
-          end
-        end
+      old_paths = Gem.paths
+      old_argv = ARGV.dup
+      ARGV.clear
+      ARGV.push(command, "-i", @gems_dir, gem_name)
+      begin
+        load Config::CONFIG['bindir'] + "/gem"
+      rescue SystemExit => e
+        # don't exit in case of 0 return value from 'gem'
+        exit(e.status) unless e.success?
       end
+      ARGV.clear
 
-      if do_cleanup
-        say "Cleaning up old files..."
-        options = {:force=>false, :install_dir=>@gems_dir, :args=>[]}
+      # TODO: cleanup
 
-        # Copied straight from the cleanup command
-        primary_gems = {}
-
-        Gem.source_index.each do |name, spec|
-          if primary_gems[spec.name].nil? or
-             primary_gems[spec.name].version < spec.version then
-            primary_gems[spec.name] = spec
-          end
-        end
-
-        gems_to_cleanup = []
-
-        unless options[:args].empty? then
-          options[:args].each do |gem_name|
-            dep = Gem::Dependency.new gem_name, Gem::Requirement.default
-            specs = Gem.source_index.search dep
-            specs.each do |spec|
-              gems_to_cleanup << spec
-            end
-          end
-        else
-          Gem.source_index.each do |name, spec|
-            gems_to_cleanup << spec
-          end
-        end
-
-        gems_to_cleanup = gems_to_cleanup.select { |spec|
-          primary_gems[spec.name].version != spec.version
-        }
-
-        deplist = Gem::DependencyList.new
-        gems_to_cleanup.uniq.each do |spec| deplist.add spec end
-
-        deps = deplist.strongly_connected_components.flatten.reverse
-
-        deps.each do |spec|
-          #say "Attempting to uninstall #{spec.full_name}"
-
-          options[:args] = [spec.name]
-
-          uninstall_options = {
-            :executables => false,
-            :version => "= #{spec.version}",
-          }
-
-          if Gem.user_dir == spec.installation_path then
-            uninstall_options[:install_dir] = spec.installation_path
-          end
-
-          uninstaller = Gem::Uninstaller.new spec.name, uninstall_options
-
-          begin
-            uninstaller.uninstall
-          rescue Gem::DependencyRemovalException, Gem::InstallError,
-                 Gem::GemNotInHomeException => e
-            say "Unable to uninstall #{spec.full_name}:"
-            say "\t#{e.class}: #{e.message}"
-          end
-        end
-
-        #say "Clean Up Complete"
-      end
+      ARGV.push(*old_argv)
+      Gem.paths = {"GEM_HOME" => old_paths.home, "GEM_PATH" => old_paths.path}
     end
 
     def setup_progress_bar

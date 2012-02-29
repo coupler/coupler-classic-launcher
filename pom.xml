@@ -8,7 +8,7 @@
   <name>coupler-launcher</name>
   <url>http://maven.apache.org</url>
   <properties>
-    <jruby.version>1.6.1</jruby.version>
+    <jruby.version>1.6.7</jruby.version>
     <gem.options>--no-rdoc --no-ri --install-dir=src/main/resources</gem.options>
     <required.gems>jruby-openssl</required.gems>
   </properties>
